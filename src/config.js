@@ -46,7 +46,18 @@ export const defaultConfig = {
     // referrerPolicy: leave as unspecified
 
     headers: undefined,
-    customLoader: undefined
+    customLoader: undefined,
+
+    videoStateMonitorInterval: 1000,
+    enableDurationMonitor: false,
+    maxDurationGap: 1.5,        // second
+    decreaseDurationStep: 0.4,  // second
+    enableVideoFrozenMonitor: false,
+    frozenTimesThreshold: 5,
+
+    enableConstVideoViewSize: false,
+    constVideoViewWidth: 1920,
+    constVideoViewHeight: 1080,
 };
 
 export function createDefaultConfig() {

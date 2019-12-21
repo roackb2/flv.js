@@ -20,7 +20,9 @@ const MSEEvents = {
     ERROR: 'error',
     SOURCE_OPEN: 'source_open',
     UPDATE_END: 'update_end',
-    BUFFER_FULL: 'buffer_full'
+    BUFFER_FULL: 'buffer_full',
+    SOURCE_END: 'source_end',
+    SOURCE_CLOSE: 'source_close',
 };
 
 export default MSEEvents;

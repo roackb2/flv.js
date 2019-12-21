@@ -64,6 +64,7 @@ class Transmuxer {
             ctl.on(TransmuxingEvents.SCRIPTDATA_ARRIVED, this._onScriptDataArrived.bind(this));
             ctl.on(TransmuxingEvents.STATISTICS_INFO, this._onStatisticsInfo.bind(this));
             ctl.on(TransmuxingEvents.RECOMMEND_SEEKPOINT, this._onRecommendSeekpoint.bind(this));
+            ctl.on(TransmuxingEvents.VIDEO_RESOLUTION_CHANGED, this._onVideoResolutionChanged.bind(this));
         }
     }
 
@@ -138,13 +139,17 @@ class Transmuxer {
     _onInitSegment(type, initSegment) {
         // do async invoke
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.INIT_SEGMENT, type, initSegment);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.INIT_SEGMENT, type, initSegment);
+            }
         });
     }
 
     _onMediaSegment(type, mediaSegment) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.MEDIA_SEGMENT, type, mediaSegment);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.MEDIA_SEGMENT, type, mediaSegment);
+            }
         });
     }
 
@@ -162,19 +167,25 @@ class Transmuxer {
 
     _onMediaInfo(mediaInfo) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.MEDIA_INFO, mediaInfo);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.MEDIA_INFO, mediaInfo);
+            }
         });
     }
 
     _onMetaDataArrived(metadata) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.METADATA_ARRIVED, metadata);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.METADATA_ARRIVED, metadata);
+            }
         });
     }
 
     _onScriptDataArrived(data) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.SCRIPTDATA_ARRIVED, data);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.SCRIPTDATA_ARRIVED, data);
+            }
         });
     }
 
@@ -186,13 +197,17 @@ class Transmuxer {
 
     _onIOError(type, info) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.IO_ERROR, type, info);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.IO_ERROR, type, info);
+            }
         });
     }
 
     _onDemuxError(type, info) {
         Promise.resolve().then(() => {
-            this._emitter.emit(TransmuxingEvents.DEMUX_ERROR, type, info);
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.DEMUX_ERROR, type, info);
+            }
         });
     }
 
@@ -206,6 +221,14 @@ class Transmuxer {
         if (this._worker) {
             this._worker.postMessage({cmd: 'logging_config', param: config});
         }
+    }
+
+    _onVideoResolutionChanged(video_info) {
+        Promise.resolve().then(() => {
+            if (this._emitter != null) {
+                this._emitter.emit(TransmuxingEvents.VIDEO_RESOLUTION_CHANGED, video_info);
+            }
+        });
     }
 
     _onWorkerMessage(e) {

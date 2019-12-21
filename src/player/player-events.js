@@ -23,7 +23,13 @@ const PlayerEvents = {
     MEDIA_INFO: 'media_info',
     METADATA_ARRIVED: 'metadata_arrived',
     SCRIPTDATA_ARRIVED: 'scriptdata_arrived',
-    STATISTICS_INFO: 'statistics_info'
+    STATISTICS_INFO: 'statistics_info',
+
+    VIDEO_RESOLUTION_CHANGED: 'video_resolution_changed',
+    MEDIA_SOURCE_ENDED: 'media_source_ended',
+    MEDIA_SOURCE_CLOSE: 'media_source_close',
+    VIDEO_FROZEN: 'video_decoded_frame_frozen',
+    MS_BUFFER_FULL: 'media_source_buffer_full',
 };
 
 export default PlayerEvents;

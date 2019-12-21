@@ -165,8 +165,19 @@ class MSEController {
         }
     }
 
-    appendInitSegment(initSegment, deferred) {
+    checkMediaSource(action) {
         if (!this._mediaSource || this._mediaSource.readyState !== 'open') {
+            // Log.w(this.TAG, 'try to do [' + action + '] but mediaSource is not prepared.');
+            // if (this._mediaSource) {
+            //     Log.w(this.TAG, 'current mediaSource readyState = ' + this._mediaSource.readyState);
+            // }
+            return false;
+        }
+        return true;
+    }
+
+    appendInitSegment(initSegment, deferred) {
+        if (!this.checkMediaSource('appendInitSegment')) {
             // sourcebuffer creation requires mediaSource.readyState === 'open'
             // so we defer the sourcebuffer creation, until sourceopen event triggered
             this._pendingSourceBufferInit.push(initSegment);
@@ -223,6 +234,10 @@ class MSEController {
     }
 
     appendMediaSegment(mediaSegment) {
+        if (!this.checkMediaSource('appendMediaSegment')) {
+            return;
+        }
+
         let ms = mediaSegment;
         this._pendingSegments[ms.type].push(ms);
 
@@ -237,6 +252,11 @@ class MSEController {
     }
 
     seek(seconds) {
+
+        if (!this.checkMediaSource('seek')) {
+            return;
+        }
+
         // remove all appended buffers
         for (let type in this._sourceBuffers) {
             if (!this._sourceBuffers[type]) {
@@ -276,7 +296,7 @@ class MSEController {
 
             // if sb is not updating, let's remove ranges now!
             if (!sb.updating) {
-                this._doRemoveRanges();
+                this._doRemoveRanges('seek');
             }
 
             // Safari 10 may get InvalidStateError in the later appendBuffer() after SourceBuffer.remove() call
@@ -322,8 +342,23 @@ class MSEController {
         return this._idrList.getLastSyncPointBeforeDts(dts);
     }
 
+    checkSourceBufferNull() {
+        let isNull = true;
+        for (let type in this._sourceBuffers) {
+            if (this._sourceBuffers[type] != null) {
+                isNull = false;
+                break;
+            }
+        }
+        return isNull;
+    }
+
     _needCleanupSourceBuffer() {
         if (!this._config.autoCleanupSourceBuffer) {
+            return false;
+        }
+
+        if (!this.checkMediaSource('_needCleanupSourceBuffer')) {
             return false;
         }
 
@@ -334,6 +369,10 @@ class MSEController {
             if (sb) {
                 let buffered = sb.buffered;
                 if (buffered.length >= 1) {
+
+                    // Log.d(this.TAG, 'SourceBuffer end-to-start delta: ' + (buffered.end(0) - buffered.start(0)) 
+                    //     + ', end-to-current delta: ' + (buffered.end(0) - currentTime));
+
                     if (currentTime - buffered.start(0) >= this._config.autoCleanupMaxBackwardDuration) {
                         return true;
                     }
@@ -346,6 +385,10 @@ class MSEController {
 
     _doCleanupSourceBuffer() {
         let currentTime = this._mediaElement.currentTime;
+
+        if (!this.checkMediaSource('_doCleanupSourceBuffer')) {
+            return;
+        }
 
         for (let type in this._sourceBuffers) {
             let sb = this._sourceBuffers[type];
@@ -370,13 +413,18 @@ class MSEController {
                 }
 
                 if (doRemove && !sb.updating) {
-                    this._doRemoveRanges();
+                    this._doRemoveRanges('_doCleanupSourceBuffer');
                 }
             }
         }
     }
 
     _updateMediaSourceDuration() {
+
+        if (!this.checkMediaSource('_updateMediaSourceDuration')) {
+            return;
+        }
+
         let sb = this._sourceBuffers;
         if (this._mediaElement.readyState === 0 || this._mediaSource.readyState !== 'open') {
             return;
@@ -397,7 +445,13 @@ class MSEController {
         this._pendingMediaDuration = 0;
     }
 
-    _doRemoveRanges() {
+    _doRemoveRanges(caller) {
+
+        if (!this.checkMediaSource('_doRemoveRanges')) {
+            return;
+        }
+
+        // Log.d(this.TAG, 'remove ranges from ' + caller);
         for (let type in this._pendingRemoveRanges) {
             if (!this._sourceBuffers[type] || this._sourceBuffers[type].updating) {
                 continue;
@@ -412,6 +466,11 @@ class MSEController {
     }
 
     _doAppendSegments() {
+
+        if (!this.checkMediaSource('_doAppendSegments')) {
+            return;
+        }
+
         let pendingSegments = this._pendingSegments;
 
         for (let type in pendingSegments) {
@@ -494,6 +553,7 @@ class MSEController {
     _onSourceEnded() {
         // fired on endOfStream
         Log.v(this.TAG, 'MediaSource onSourceEnded');
+        this._emitter.emit(MSEEvents.SOURCE_END);
     }
 
     _onSourceClose() {
@@ -504,6 +564,7 @@ class MSEController {
             this._mediaSource.removeEventListener('sourceended', this.e.onSourceEnded);
             this._mediaSource.removeEventListener('sourceclose', this.e.onSourceClose);
         }
+        this._emitter.emit(MSEEvents.SOURCE_CLOSE);
     }
 
     _hasPendingSegments() {
@@ -520,7 +581,7 @@ class MSEController {
         if (this._requireSetMediaDuration) {
             this._updateMediaSourceDuration();
         } else if (this._hasPendingRemoveRanges()) {
-            this._doRemoveRanges();
+            this._doRemoveRanges('_onSourceBufferUpdateEnd');
         } else if (this._hasPendingSegments()) {
             this._doAppendSegments();
         } else if (this._hasPendingEos) {

@@ -87,6 +87,19 @@ class FlvPlayer {
         if (this._alwaysSeekKeyframe) {
             this._config.accurateSeek = false;
         }
+
+
+        this._videoStateMonitorInterval = this._config.videoStateMonitorInterval;
+        // for duration monitor
+        this._enableDurationMonitor = this._config.enableDurationMonitor;
+        this._maxDurationGap = this._config.maxDurationGap;
+        this._decreaseDurationStep = this._config.decreaseDurationStep;
+        this._durationMonitor = null;
+        // for video frozen monitor
+        this._enableVideoFrozenMonitor = this._config.enableVideoFrozenMonitor;
+        this._frozenTimesThreshold = this._config.frozenTimesThreshold;
+        this._forzenTimes = 0;
+        this._lastDecodedFrames = 0;
     }
 
     destroy() {
@@ -103,8 +116,10 @@ class FlvPlayer {
         this.e = null;
         this._mediaDataSource = null;
 
-        this._emitter.removeAllListeners();
-        this._emitter = null;
+        if (this._emitter) {
+            this._emitter.removeAllListeners();
+            this._emitter = null;
+        }
     }
 
     on(event, listener) {
@@ -130,6 +145,8 @@ class FlvPlayer {
 
     attachMediaElement(mediaElement) {
         this._mediaElement = mediaElement;
+
+        //see more events of video element from https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video
         mediaElement.addEventListener('loadedmetadata', this.e.onvLoadedMetadata);
         mediaElement.addEventListener('seeking', this.e.onvSeeking);
         mediaElement.addEventListener('canplay', this.e.onvCanPlay);
@@ -146,6 +163,13 @@ class FlvPlayer {
                 this._hasPendingLoad = false;
                 this.load();
             }
+        });
+        this._msectl.on(MSEEvents.SOURCE_END, () => {
+            this._emitter.emit(PlayerEvents.MEDIA_SOURCE_ENDED);
+        });
+        this._msectl.on(MSEEvents.SOURCE_CLOSE, () => {
+            this._mseSourceOpened = false;
+            this._emitter.emit(PlayerEvents.MEDIA_SOURCE_CLOSE);
         });
         this._msectl.on(MSEEvents.ERROR, (info) => {
             this._emitter.emit(PlayerEvents.ERROR,
@@ -206,6 +230,12 @@ class FlvPlayer {
             this._mediaElement.currentTime = 0;
         }
 
+        if (this._enableDurationMonitor && (this._durationMonitor == null)) {
+            this._durationMonitor = self.setInterval(this._doDurationMonitor.bind(this), this._videoStateMonitorInterval);
+            this._forzenTimes = 0;
+            this._lastDecodedFrames = 0;
+        }
+
         this._transmuxer = new Transmuxer(this._mediaDataSource, this._config);
 
         this._transmuxer.on(TransmuxingEvents.INIT_SEGMENT, (type, is) => {
@@ -258,6 +288,9 @@ class FlvPlayer {
                 this._mediaElement.currentTime = milliseconds / 1000;
             }
         });
+        this._transmuxer.on(TransmuxingEvents.VIDEO_RESOLUTION_CHANGED, (video_info) => {
+            this._emitter.emit(PlayerEvents.VIDEO_RESOLUTION_CHANGED, video_info);
+        });
 
         this._transmuxer.open();
     }
@@ -274,6 +307,13 @@ class FlvPlayer {
             this._transmuxer.destroy();
             this._transmuxer = null;
         }
+
+        if (this._durationMonitor) {
+            self.clearInterval(this._durationMonitor);
+            this._durationMonitor = null;
+        }
+        this._forzenTimes = 0;
+        this._lastDecodedFrames = 0;
     }
 
     play() {
@@ -369,6 +409,79 @@ class FlvPlayer {
         return statInfo;
     }
 
+    enableVideoStateMonitor(enabled) {
+        this._enableDurationMonitor = enabled;
+        this._enableVideoFrozenMonitor = enabled;
+    }
+
+    _doDurationMonitor() {
+
+        // Log.d(this.TAG, '_doDurationMonitor, decoded_frames:' + decoded_frames);
+        if (!this._enableDurationMonitor || !this._mseSourceOpened) {
+            return;
+        }
+
+        if (this._msectl && this._msectl.checkSourceBufferNull()) {
+            return; 
+        }
+
+        let buffered = this._mediaElement.buffered;
+        let currentTime = this._mediaElement.currentTime;
+        let isPaused = this._mediaElement.paused;
+
+        if (buffered == null || buffered.length == 0) {
+            return;
+        }
+
+        let buffer_end = buffered.end(0);
+        let current_play_delta = buffer_end - currentTime;
+
+        // check duration
+        if (!isPaused && current_play_delta > this._maxDurationGap) {
+            //当前播放点与缓冲区末尾相差超过阈值，追赶
+            let newGap = buffer_end - this._decreaseDurationStep;
+            Log.w(this.TAG, 'large duration {' + current_play_delta 
+                + '}, reduce ' + this._decreaseDurationStep + ' and set to ' + newGap);
+            this._mediaElement.currentTime = newGap;
+            this._requestSetTime = true;
+        }
+
+        // check video frozen or not
+        if (this._enableVideoFrozenMonitor) {
+
+            // get current decoded frames count
+            let decoded_frames = 0;
+            if (this._mediaElement.getVideoPlaybackQuality) {
+                let quality = this._mediaElement.getVideoPlaybackQuality();
+                decoded_frames = quality.totalVideoFrames;
+            } else if (this._mediaElement.webkitDecodedFrameCount != undefined) {
+                decoded_frames = this._mediaElement.webkitDecodedFrameCount;
+            } else {
+                // could not get decoded frames count
+                return;
+            }
+            
+            if (this._lastDecodedFrames != 0) {
+                //check whether video frozen or not
+                if (this._lastDecodedFrames == decoded_frames) {
+                    this._forzenTimes++;
+                    // Log.w(this.TAG, '--== Video decoded frames stop increase, check count:' + this._forzenTimes);
+                } else {
+                    this._forzenTimes = 0;
+                }
+            }
+            // Log.d(this.TAG, '--== decoded frame {last:' + this._lastDecodedFrames + ', cur:' + decoded_frames + '}');
+            this._lastDecodedFrames = decoded_frames;
+
+            if (this._forzenTimes >= this._frozenTimesThreshold) {
+                // equals to threshold, emit VIDEO_FROZEN event
+                Log.w(this.TAG, 'Report video frozen event');
+                this._emitter.emit(PlayerEvents.VIDEO_FROZEN);
+                this._forzenTimes = 0;
+            }
+        }
+    }
+
     _onmseUpdateEnd() {
         if (!this._config.lazyLoad || this._config.isLive) {
             return;
@@ -400,6 +513,7 @@ class FlvPlayer {
         if (this._progressChecker == null) {
             this._suspendTransmuxer();
         }
+        this._emitter.emit(PlayerEvents.MS_BUFFER_FULL);
     }
 
     _suspendTransmuxer() {

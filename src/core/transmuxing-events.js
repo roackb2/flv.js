@@ -27,7 +27,8 @@ const TransmuxingEvents = {
     METADATA_ARRIVED: 'metadata_arrived',
     SCRIPTDATA_ARRIVED: 'scriptdata_arrived',
     STATISTICS_INFO: 'statistics_info',
-    RECOMMEND_SEEKPOINT: 'recommend_seekpoint'
+    RECOMMEND_SEEKPOINT: 'recommend_seekpoint',
+    VIDEO_RESOLUTION_CHANGED: 'video_resolution_changed'
 };
 
 export default TransmuxingEvents;

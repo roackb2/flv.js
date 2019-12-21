@@ -58,6 +58,7 @@ let TransmuxingWorker = function (self) {
                 controller.on(TransmuxingEvents.SCRIPTDATA_ARRIVED, onScriptDataArrived.bind(this));
                 controller.on(TransmuxingEvents.STATISTICS_INFO, onStatisticsInfo.bind(this));
                 controller.on(TransmuxingEvents.RECOMMEND_SEEKPOINT, onRecommendSeekpoint.bind(this));
+                controller.on(TransmuxingEvents.VIDEO_RESOLUTION_CHANGED, onVideoResolutionChanged.bind(this));
                 break;
             case 'destroy':
                 if (controller) {
@@ -198,6 +199,14 @@ let TransmuxingWorker = function (self) {
                 logcat: str
             }
         });
+    }
+
+    function onVideoResolutionChanged(video_info) {
+        let obj = {
+            msg: TransmuxingEvents.VIDEO_RESOLUTION_CHANGED,
+            data: video_info
+        };
+        self.postMessage(obj);
     }
 
 };

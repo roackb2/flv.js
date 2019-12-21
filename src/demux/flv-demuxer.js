@@ -56,6 +56,7 @@ class FLVDemuxer {
         this._onScriptDataArrived = null;
         this._onTrackMetadata = null;
         this._onDataAvailable = null;
+        this._onVideoResolutionChanged = null;
 
         this._dataOffset = probeData.dataOffset;
         this._firstParse = true;
@@ -96,6 +97,21 @@ class FLVDemuxer {
             24000, 22050, 16000, 12000, 11025, 8000, 7350
         ];
 
+        this._lastVideoDimension = {
+            width: -1,
+            height: -1,
+            profile: '',
+            level: ''
+        };
+
+        this._bpsCalculator = null;
+        this._bpsInfo = {
+            lastVideoBytes: 0,
+            lastAudioBytes: 0,
+            bps_video: 0,
+            bps_audio: 0
+        };
+
         this._mpegAudioV10SampleRateTable = [44100, 48000, 32000, 0];
         this._mpegAudioV20SampleRateTable = [22050, 24000, 16000, 0];
         this._mpegAudioV25SampleRateTable = [11025, 12000, 8000,  0];
@@ -128,6 +144,13 @@ class FLVDemuxer {
         this._onScriptDataArrived = null;
         this._onTrackMetadata = null;
         this._onDataAvailable = null;
+        this._lastVideoDimension = null;
+
+        if (this._bpsCalculator) {
+            self.clearInterval(this._bpsCalculator);
+            this._bpsCalculator = null;
+            this._bpsInfo = null;
+        }
     }
 
     static probe(buffer) {
@@ -247,6 +270,14 @@ class FLVDemuxer {
         this._mediaInfo.hasVideo = hasVideo;
     }
 
+    get onVideoResolutionChanged() {
+        return this._onVideoResolutionChanged;
+    }
+
+    set onVideoResolutionChanged(callback) {
+        this._onVideoResolutionChanged = callback;
+    }
+
     resetMediaInfo() {
         this._mediaInfo = new MediaInfo();
     }
@@ -262,6 +293,18 @@ class FLVDemuxer {
             return this._videoInitialMetadataDispatched;
         }
         return false;
+    }
+
+    _calculateRealtimeBitrate() {
+        if (!this._bpsInfo) {
+            return;
+        }
+
+        this._bpsInfo.bps_video = 8 * this._bpsInfo.lastVideoBytes / 1024;
+        this._bpsInfo.bps_audio = 8 * this._bpsInfo.lastAudioBytes / 1024;
+        // Log.d(this.TAG, 'realtime av bitrate: v:' + video_bps + ', a:' + audio_bps);
+
+        this._bpsInfo.lastVideoBytes = this._bpsInfo.lastAudioBytes = 0;
     }
 
     // function parseChunks(chunk: ArrayBuffer, byteStart: number): number;
@@ -282,6 +325,10 @@ class FLVDemuxer {
             }
         }
 
+        if (!this._bpsCalculator) {
+            this._bpsCalculator = self.setInterval(this._calculateRealtimeBitrate.bind(this), 1000);
+        }
+
         if (this._firstParse) {  // handle PreviousTagSize0 before Tag1
             this._firstParse = false;
             if (byteStart + offset !== this._dataOffset) {
@@ -295,6 +342,9 @@ class FLVDemuxer {
             }
             offset += 4;
         }
+
+        let videoBytes = 0;
+        let audioBytes = 0;
 
         while (offset < chunk.byteLength) {
             this._dispatch = true;
@@ -338,9 +388,11 @@ class FLVDemuxer {
             switch (tagType) {
                 case 8:  // Audio
                     this._parseAudioData(chunk, dataOffset, dataSize, timestamp);
+                    audioBytes += dataSize;
                     break;
                 case 9:  // Video
                     this._parseVideoData(chunk, dataOffset, dataSize, timestamp, byteStart + offset);
+                    videoBytes += dataSize;
                     break;
                 case 18:  // ScriptDataObject
                     this._parseScriptData(chunk, dataOffset, dataSize);
@@ -353,6 +405,11 @@ class FLVDemuxer {
             }
 
             offset += 11 + dataSize + 4;  // tagBody + dataSize + prevTagSize
+        }
+
+        if (this._bpsInfo) {
+            this._bpsInfo.lastAudioBytes += audioBytes;
+            this._bpsInfo.lastVideoBytes += videoBytes;
         }
 
         // dispatch parsed frames to consumer (typically, the remuxer)
@@ -437,7 +494,14 @@ class FLVDemuxer {
             }
             this._dispatch = false;
             this._mediaInfo.metadata = onMetaData;
-            Log.v(this.TAG, 'Parsed onMetaData');
+
+            Log.v(this.TAG, 'Parsed onMetaData, hasAudio:' + this._mediaInfo.hasAudio 
+                + ', hasVideo:' + this._mediaInfo.hasVideo + ', video demension:' 
+                + this._mediaInfo.width + 'x' + this._mediaInfo.height + '@' + this._mediaInfo.fps 
+                + ' fps, hasKeyframesIndex=' + this._mediaInfo.hasKeyframesIndex
+                + ', video_bitrate=' + this._mediaInfo.videoDataRate
+                + ', audio_bitrate=' + this._mediaInfo.audioDataRate);
+
             if (this._mediaInfo.isComplete()) {
                 this._onMediaInfo(this._mediaInfo);
             }
@@ -533,6 +597,22 @@ class FLVDemuxer {
                     Log.w(this.TAG, 'Found another AudioSpecificConfig!');
                 }
                 let misc = aacData.data;
+                
+                Log.v(this.TAG, 'old {channel:' + meta.channelCount + ', codec:' + meta.codec
+                    + ', sample rate:' + meta.audioSampleRate + ', orignal codec:' + misc.originalCodec
+                    + ', config:' + meta.config + '}');
+                Log.v(this.TAG, 'new {channel:' + misc.channelCount + ', codec:' + misc.codec
+                    + ', sample rate:' + misc.samplingRate + ', orignal codec:' + misc.originalCodec
+                    + ', config:' + misc.config + '}');
+
+                if (meta.channelCount === misc.channelCount &&
+                    meta.audioSampleRate === misc.samplingRate &&
+                    meta.codec === misc.codec &&
+                    meta.originalCodec === misc.originalCodec) {
+                    Log.w(this.TAG, 'audio specific config do not changed, discard it.');
+                    return;
+                }
+
                 meta.audioSampleRate = misc.samplingRate;
                 meta.channelCount = misc.channelCount;
                 meta.codec = misc.codec;
@@ -558,6 +638,8 @@ class FLVDemuxer {
                 mi.audioCodec = meta.originalCodec;
                 mi.audioSampleRate = meta.audioSampleRate;
                 mi.audioChannelCount = meta.channelCount;
+
+                //codecs format see https://tools.ietf.org/html/rfc6381
                 if (mi.hasVideo) {
                     if (mi.videoCodec != null) {
                         mi.mimeType = 'video/x-flv; codecs="' + mi.videoCodec + ',' + mi.audioCodec + '"';
@@ -881,6 +963,7 @@ class FLVDemuxer {
         let le = this._littleEndian;
         let v = new DataView(arrayBuffer, dataOffset, dataSize);
 
+        let newAVCDecoderConfig = false;
         if (!meta) {
             if (this._hasVideo === false && this._hasVideoFlagOverrided === false) {
                 this._hasVideo = true;
@@ -894,7 +977,8 @@ class FLVDemuxer {
             meta.duration = this._duration;
         } else {
             if (typeof meta.avcc !== 'undefined') {
-                Log.w(this.TAG, 'Found another AVCDecoderConfigurationRecord!');
+                newAVCDecoderConfig = true;
+                Log.w(this.TAG, '--== Found another AVCDecoderConfigurationRecord! ==-');
             }
         }
 
@@ -922,6 +1006,7 @@ class FLVDemuxer {
             Log.w(this.TAG, `Flv: Strange AVCDecoderConfigurationRecord: SPS Count = ${spsCount}`);
         }
 
+        let isLandscapeView = true;
         let offset = 6;
 
         for (let i = 0; i < spsCount; i++) {
@@ -940,6 +1025,55 @@ class FLVDemuxer {
             if (i !== 0) {
                 // ignore other sps's config
                 continue;
+            }
+
+            Log.v(this.TAG, 'Parsed AVCDecoderConfigurationRecord, sps:{codec_size: ' + config.codec_size.width 
+                + 'x' + config.codec_size.height + ', present_size: ' + 
+                + config.present_size.width + 'x' + config.present_size.height
+                + ', profile: ' + config.profile_string + ', level: ' + config.level_string
+                + ', fps: {' + config.frame_rate.fps_den + ',' + config.frame_rate.fps_num
+                + ',' + config.frame_rate.fps + ',' + config.frame_rate.fixed 
+                + '}, sar_ratio: ' + config.sar_ratio.width
+                + 'x' + config.sar_ratio.height + '}');
+
+            isLandscapeView = config.codec_size.width >= config.codec_size.height ? true : false;
+            
+            let resolutionChanged = false;
+            if (newAVCDecoderConfig && this._lastVideoDimension) {
+
+                // compare previous video width and height
+                if ((this._lastVideoDimension.width != config.codec_size.width || 
+                    this._lastVideoDimension.height != config.codec_size.height)) {
+
+                    // video width or height changed
+                    resolutionChanged = true;
+
+                    // save new video demension
+                    this._lastVideoDimension.width = config.codec_size.width;
+                    this._lastVideoDimension.height = config.codec_size.height;
+                    this._lastVideoDimension.profile = config.profile_string;
+                    this._lastVideoDimension.level = config.level_string;
+
+                    // emit video_resolution_changed event
+                    let video_info = {};
+                    video_info.width = config.codec_size.width;
+                    video_info.height = config.codec_size.height;
+                    this._onVideoResolutionChanged(video_info);
+                } else {
+                    // width and height does not changed, compare profile and level
+                    if (this._lastVideoDimension.profile == config.profile_string &&
+                        this._lastVideoDimension.level == config.level_string) {
+                        // Tecent Cloud would send AVCDecoderConfigurationRecord per second, I don't know why!
+                        Log.w(this.TAG, 'video config does not changed. discard reset.');
+                        return;
+                    }
+                }
+            } else {
+                // save the first video dimentsion
+                this._lastVideoDimension.width = config.codec_size.width;
+                this._lastVideoDimension.height = config.codec_size.height;
+                this._lastVideoDimension.profile = config.profile_string;
+                this._lastVideoDimension.level = config.level_string;
             }
 
             meta.codecWidth = config.codec_size.width;
@@ -1023,7 +1157,10 @@ class FLVDemuxer {
 
         meta.avcc = new Uint8Array(dataSize);
         meta.avcc.set(new Uint8Array(arrayBuffer, dataOffset, dataSize), 0);
-        Log.v(this.TAG, 'Parsed AVCDecoderConfigurationRecord');
+
+        Log.v(this.TAG, 'Parsed AVCDecoderConfigurationRecord done, ' 
+            + meta.codecWidth + 'x' + meta.codecHeight + '@' + meta.frameRate.fps + ' fps, '
+            + 'profile=' + meta.profile + ', level=' + meta.level);
 
         if (this._isInitialMetadataDispatched()) {
             // flush parsed frames
@@ -1035,6 +1172,12 @@ class FLVDemuxer {
         }
         // notify new metadata
         this._dispatch = false;
+        if (this._config.enableConstVideoViewSize) {
+            Log.w(this.TAG, '--== const video view size enabled, use {' 
+                + this._config.constVideoViewWidth + 'x' + this._config.constVideoViewHeight + '} ==--');
+            meta.codecWidth = isLandscapeView ? this._config.constVideoViewWidth : this._config.constVideoViewHeight;
+            meta.codecHeight = isLandscapeView ? this._config.constVideoViewHeight : this._config.constVideoViewWidth;
+        }
         this._onTrackMetadata('video', meta);
     }
 

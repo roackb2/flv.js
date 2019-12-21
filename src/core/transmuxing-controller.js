@@ -267,6 +267,7 @@ class TransmuxingController {
             this._demuxer.onMediaInfo = this._onMediaInfo.bind(this);
             this._demuxer.onMetaDataArrived = this._onMetaDataArrived.bind(this);
             this._demuxer.onScriptDataArrived = this._onScriptDataArrived.bind(this);
+            this._demuxer.onVideoResolutionChanged = this._onVideoResolutionChanged.bind(this);
 
             this._remuxer.bindDataSource(this._demuxer
                          .bindDataSource(this._ioctl
@@ -430,8 +431,18 @@ class TransmuxingController {
         info.loaderType = this._ioctl.loaderType;
         info.currentSegmentIndex = this._currentSegmentIndex;
         info.totalSegmentCount = this._mediaDataSource.segments.length;
+        info.bps_audio = info.bps_video = 0;
 
+        if (this._demuxer && this._demuxer._bpsInfo) {
+            info.bps_video = this._demuxer._bpsInfo.bps_video;
+            info.bps_audio = this._demuxer._bpsInfo.bps_audio;
+        }
+        
         this._emitter.emit(TransmuxingEvents.STATISTICS_INFO, info);
+    }
+
+    _onVideoResolutionChanged(video_info) {
+        this._emitter.emit(TransmuxingEvents.VIDEO_RESOLUTION_CHANGED, video_info);
     }
 
 }
