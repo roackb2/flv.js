@@ -58,6 +58,15 @@ export const defaultConfig = {
     enableConstVideoViewSize: false,
     constVideoViewWidth: 1920,
     constVideoViewHeight: 1080,
+
+    latencyDetectInterval: 15000,   // 毫秒，多长时间统计一次延迟追赶次数
+    latencyDetectThreshold: 3,      // 次数，每次统计时，超过这个次数认为延迟追赶太频繁了
+    latencyDetectIncreaseStep: 1,   // 当发生延迟追赶频繁，主动上调的数值（秒）
+    latencyDetectAdjustStep: 0.1,   // 每次发生追赶，都上调此数值（秒）。当达到不发生追赶的条件时，下调此数值。
+    latencyDetectAdjustFactor: 4,   // 下调延迟追赶阈值的时间统计因子。即 latencyDetectInterval x latencyDetectAdjustFactor
+                                    // 后，如果一直没有发生延迟追赶，才进行下调。目的是通过这个因子来控制下调速度。
+    // 实际应用中，发生追赶应该立刻上调latencyDetectAdjustStep，短时间多次追赶应该立刻补充一个较大的数值latencyDetectIncreaseStep
+    // 上调以后，下调步子要小一点，逐步接近适合用户当前网络情况、以及源flv流情况的数值。
 };
 
 export function createDefaultConfig() {
